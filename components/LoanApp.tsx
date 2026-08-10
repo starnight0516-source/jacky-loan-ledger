@@ -527,7 +527,7 @@ export default function LoanApp() {
       const payload = await response.json() as { code: string; expiresAt: number };
       setPairingCode(payload.code);
       setPairingExpiresAt(payload.expiresAt);
-      notify("管理裝置授權碼已產生，10 分鐘內有效");
+      notify("管理裝置授權碼已產生，24 小時內有效");
     } catch (error) {
       console.error(error);
       notify("無法產生授權碼，請確認家庭雲端仍在連線中");
@@ -559,7 +559,7 @@ export default function LoanApp() {
       notify("這台電腦已取得管理權限，之後不用再輸入授權碼");
     } catch (error) {
       console.error(error);
-      notify("授權碼不正確、已使用或已超過 10 分鐘");
+      notify("授權碼不正確、已使用或已超過 24 小時");
     }
   }
 
@@ -1104,7 +1104,7 @@ export default function LoanApp() {
           <form className="modal-form" onSubmit={claimManagementDevice}>
             <label>裝置名稱<input name="deviceLabel" type="text" maxLength={60} defaultValue="家用個人電腦" placeholder="例如：家用電腦" required /></label>
             <label>管理授權碼<input name="pairingCode" className="pairing-code-input" type="text" autoCapitalize="characters" autoComplete="one-time-code" placeholder="XXXX-XXXX-XXXX" required autoFocus /></label>
-            <p className="modal-help">授權碼有效時間為 10 分鐘，且只能使用一次。成功後這台電腦會記住管理權限。</p>
+            <p className="modal-help">授權碼有效時間為 24 小時，且只能使用一次。成功後這台電腦會記住管理權限。</p>
             <div className="modal-actions"><button type="button" className="ghost-button" onClick={() => setModal(null)}>取消</button><button type="submit" className="primary-button">確認授權</button></div>
           </form>
         </Modal>
