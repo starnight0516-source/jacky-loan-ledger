@@ -149,19 +149,19 @@ button:disabled { cursor: wait; opacity: .6; }
 .mini-stats b { margin-top: 7px; font-size: 20px; }
 .records-full { padding: 8px 20px 20px; }
 .table-scroll { width: 100%; overflow-x: auto; }
-.data-table { width: 100%; border-collapse: collapse; min-width: 880px; }
-.data-table th { padding: 15px 13px 11px; color: #778895; border-bottom: 1px solid var(--line); font-size: 9px; letter-spacing: .04em; text-align: left; white-space: nowrap; }
-.data-table td { padding: 15px 13px; border-bottom: 1px solid #edf1f4; color: #425464; font-size: 11px; vertical-align: middle; }
+.data-table { width: 100%; border-collapse: collapse; min-width: 980px; }
+.data-table th { padding: 17px 15px 13px; color: #687c8b; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 800; letter-spacing: .03em; text-align: left; white-space: nowrap; }
+.data-table td { padding: 18px 15px; border-bottom: 1px solid #edf1f4; color: #344b5c; font-size: 14px; line-height: 1.45; vertical-align: middle; }
 .data-table tbody tr:last-child td { border-bottom: 0; }
 .data-table tbody tr:hover { background: #f9fbfc; }
 .data-table td b, .data-table td small { display: block; }
-.data-table td b { color: var(--ink); font-size: 11px; }
-.data-table td small { margin-top: 4px; color: #8b9ba7; font-size: 8px; }
+.data-table td b { color: var(--ink); font-size: 14px; }
+.data-table td small { margin-top: 6px; color: #758997; font-size: 11px; line-height: 1.4; }
 .money-cell { color: var(--ink) !important; font-variant-numeric: tabular-nums; }
 .row-actions { display: flex; gap: 6px; white-space: nowrap; }
-.row-button { padding: 7px 10px; color: #146a75; background: #e8f5f5; font-size: 9px; }
-.delete-button { padding: 7px 9px; color: #b34b4b; background: #fff1f1; font-size: 9px; }
-.status-badge { display: inline-block; padding: 5px 8px; border-radius: 999px; font-size: 8px; font-weight: 800; white-space: nowrap; }
+.row-button { padding: 9px 12px; color: #146a75; background: #e8f5f5; font-size: 11px; }
+.delete-button { padding: 9px 11px; color: #b34b4b; background: #fff1f1; font-size: 11px; }
+.status-badge { display: inline-block; padding: 7px 10px; border-radius: 999px; font-size: 10px; font-weight: 800; white-space: nowrap; }
 .status-badge.paid { color: #0c754e; background: #e3f6ed; }
 .status-badge.overdue { color: #b23d3d; background: #fdeaea; }
 .status-badge.due { color: #9b610e; background: #fff1d8; }
