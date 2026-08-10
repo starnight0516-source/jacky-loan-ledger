@@ -36,6 +36,7 @@ type AppState = {
 
 type NavKey = "dashboard" | "records" | "months" | "calculator" | "settings";
 type CloudStatus = "offline" | "connecting" | "online" | "error";
+type FamilyStatus = "local" | "loading" | "creating" | "owner" | "viewer" | "error";
 
 type FirebaseDocRef = {
   get: () => Promise<{ exists: boolean; data: () => { state?: AppState } | undefined }>;
@@ -71,6 +72,10 @@ declare global {
 
 const STORAGE_KEY = "jacky-loan-ledger-v2";
 const FIREBASE_KEY = "jacky-loan-ledger-firebase-config";
+const FAMILY_SHARE_ID_KEY = "jacky-loan-ledger-family-share-id";
+const FAMILY_WRITE_TOKEN_KEY = "jacky-loan-ledger-family-write-token";
+const FAMILY_API = "https://jacky-loan-ledger.familywu5-3.chatgpt.site/api/shared-ledger";
+const FAMILY_PAGE = "https://starnight0516-source.github.io/jacky-loan-ledger/";
 const MS_DAY = 86_400_000;
 
 const defaultState: AppState = {
@@ -289,6 +294,10 @@ export default function LoanApp() {
   const [calculatorAmount, setCalculatorAmount] = useState(100_000);
   const [calculatorStart, setCalculatorStart] = useState("");
   const [calculatorEnd, setCalculatorEnd] = useState("");
+  const [familyStatus, setFamilyStatus] = useState<FamilyStatus>("local");
+  const [familyShareId, setFamilyShareId] = useState("");
+  const [familyUpdatedAt, setFamilyUpdatedAt] = useState<number | null>(null);
+  const [familySyncing, setFamilySyncing] = useState(false);
   const cloudDocRef = useRef<FirebaseDocRef | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
@@ -317,6 +326,72 @@ export default function LoanApp() {
     }, 700);
     return () => window.clearTimeout(timer);
   }, [state, hydrated, cloudStatus]);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- load authoritative family ledger after local hydration */
+  useEffect(() => {
+    if (!hydrated) return;
+    const urlShareId = new URLSearchParams(window.location.search).get("share")?.trim() ?? "";
+    const savedShareId = localStorage.getItem(FAMILY_SHARE_ID_KEY) ?? "";
+    const id = urlShareId || savedShareId;
+    if (!/^[a-f0-9]{36}$/.test(id)) return;
+
+    let cancelled = false;
+    const writeToken = localStorage.getItem(FAMILY_WRITE_TOKEN_KEY) ?? "";
+    const owner = savedShareId === id && /^[a-f0-9]{64}$/.test(writeToken);
+    setFamilyStatus("loading");
+    setFamilyShareId(id);
+
+    async function loadFamilyLedger() {
+      try {
+        const response = await fetch(`${FAMILY_API}?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("shared_ledger_unavailable");
+        const payload = await response.json() as { state: AppState; updatedAt: number };
+        if (cancelled) return;
+        setState(payload.state);
+        setFamilyUpdatedAt(payload.updatedAt);
+        setFamilyStatus(owner ? "owner" : "viewer");
+      } catch (error) {
+        console.error(error);
+        if (!cancelled) {
+          setFamilyStatus("error");
+          setToast("家庭共用資料暫時無法載入，請稍後重新整理");
+        }
+      }
+    }
+
+    loadFamilyLedger();
+    const poller = owner ? null : window.setInterval(loadFamilyLedger, 30_000);
+    return () => {
+      cancelled = true;
+      if (poller) window.clearInterval(poller);
+    };
+  }, [hydrated]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (!hydrated || familyStatus !== "owner" || !familyShareId) return;
+    const writeToken = localStorage.getItem(FAMILY_WRITE_TOKEN_KEY) ?? "";
+    if (!writeToken) return;
+    const timer = window.setTimeout(async () => {
+      setFamilySyncing(true);
+      try {
+        const response = await fetch(FAMILY_API, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeToken}` },
+          body: JSON.stringify({ id: familyShareId, state }),
+        });
+        if (!response.ok) throw new Error("family_sync_failed");
+        const payload = await response.json() as { updatedAt: number };
+        setFamilyUpdatedAt(payload.updatedAt);
+      } catch (error) {
+        console.error(error);
+        setToast("家庭共用同步失敗，資料仍保留在本機");
+      } finally {
+        setFamilySyncing(false);
+      }
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [state, hydrated, familyStatus, familyShareId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -396,6 +471,43 @@ export default function LoanApp() {
 
   function notify(message: string) {
     setToast(message);
+  }
+
+  function familyShareUrl(id = familyShareId) {
+    return `${FAMILY_PAGE}?share=${encodeURIComponent(id)}`;
+  }
+
+  async function copyFamilyLink(id = familyShareId) {
+    const url = familyShareUrl(id);
+    try {
+      await navigator.clipboard.writeText(url);
+      notify("家庭查看連結已複製，可以直接傳給太太");
+    } catch {
+      window.prompt("請複製這組家庭查看連結", url);
+    }
+  }
+
+  async function enableFamilySharing() {
+    setFamilyStatus("creating");
+    try {
+      const response = await fetch(FAMILY_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state }),
+      });
+      if (!response.ok) throw new Error("family_create_failed");
+      const payload = await response.json() as { id: string; writeToken: string; updatedAt: number };
+      localStorage.setItem(FAMILY_SHARE_ID_KEY, payload.id);
+      localStorage.setItem(FAMILY_WRITE_TOKEN_KEY, payload.writeToken);
+      setFamilyShareId(payload.id);
+      setFamilyUpdatedAt(payload.updatedAt);
+      setFamilyStatus("owner");
+      await copyFamilyLink(payload.id);
+    } catch (error) {
+      console.error(error);
+      setFamilyStatus("error");
+      notify("家庭共用建立失敗，請稍後再試一次");
+    }
   }
 
   function setCalculatorDuration(days: number) {
@@ -578,6 +690,8 @@ export default function LoanApp() {
     { key: "calculator", label: "利息試算", caption: "領款前預估成本" },
     { key: "settings", label: "設定與備份", caption: "參數與雲端同步" },
   ];
+  const isFamilyViewer = familyStatus === "viewer";
+  const visibleNavItems = isFamilyViewer ? navItems.filter((item) => item.key !== "settings") : navItems;
 
   const selectedLoan = state.records.find((record) => record.id === selectedRecord);
   const selectedLoanRemaining = selectedLoan
@@ -597,7 +711,7 @@ export default function LoanApp() {
         </div>
 
         <nav className="main-nav" aria-label="主要導覽">
-          {navItems.map((item, index) => (
+          {visibleNavItems.map((item, index) => (
             <button
               key={item.key}
               className={active === item.key ? "active" : ""}
@@ -610,10 +724,10 @@ export default function LoanApp() {
         </nav>
 
         <div className="sidebar-status">
-          <div className={`status-dot ${cloudStatus}`}></div>
+          <div className={`status-dot ${familyStatus === "owner" || familyStatus === "viewer" ? "online" : cloudStatus}`}></div>
           <div>
-            <b>{cloudStatus === "online" ? "雲端同步中" : "本機安全模式"}</b>
-            <span>{cloudStatus === "online" ? cloudEmail : "資料儲存在此裝置"}</span>
+            <b>{familyStatus === "viewer" ? "家庭查看模式" : familyStatus === "owner" ? "家庭雲端同步" : cloudStatus === "online" ? "雲端同步中" : "本機安全模式"}</b>
+            <span>{familyStatus === "viewer" ? "唯讀顯示共用帳本" : familyStatus === "owner" ? (familySyncing ? "正在同步最新資料" : "夫妻共用資料已連線") : cloudStatus === "online" ? cloudEmail : "資料儲存在此裝置"}</span>
           </div>
         </div>
       </aside>
@@ -628,13 +742,20 @@ export default function LoanApp() {
             <h1>{navItems.find((item) => item.key === active)?.label}</h1>
           </div>
           <div className="top-actions">
+            {isFamilyViewer && <span className="viewer-chip">唯讀查看</span>}
             <span className="rate-chip">年利率 <b>{(settings.annualRate * 100).toFixed(2)}%</b></span>
-            <button className="primary-button" onClick={() => setModal("draw")}><span>＋</span> 新增領款</button>
+            {!isFamilyViewer && <button className="primary-button" onClick={() => setModal("draw")}><span>＋</span> 新增領款</button>}
           </div>
         </header>
 
         {active === "dashboard" && (
           <div className="page-content">
+            {isFamilyViewer && (
+              <section className="family-view-banner">
+                <div><b>家庭共用帳本</b><span>您目前以唯讀方式查看 Jacky 分享的完整貸款紀錄。</span></div>
+                <small>{familyUpdatedAt ? `雲端更新：${new Date(familyUpdatedAt).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })}` : "正在確認最新資料"}</small>
+              </section>
+            )}
             {unpaidInterest > 0 && (
               <section className="due-alert">
                 <div className="alert-icon">!</div>
@@ -690,7 +811,7 @@ export default function LoanApp() {
                 <div><span className="eyebrow">RECENT ACTIVITY</span><h2>目前貸款明細</h2></div>
                 <button className="text-button" onClick={() => setActive("records")}>查看全部 →</button>
               </div>
-              <RecordTable records={state.records.slice(0, 5)} today={today} settings={settings} numberById={recordNumberById} onRepay={openRepay} onDelete={deleteRecord} compact />
+              <RecordTable records={state.records.slice(0, 5)} today={today} settings={settings} numberById={recordNumberById} onRepay={openRepay} onDelete={deleteRecord} compact readOnly={isFamilyViewer} />
             </section>
           </div>
         )}
@@ -699,7 +820,7 @@ export default function LoanApp() {
           <div className="page-content">
             <section className="section-intro">
               <div><span className="eyebrow">PRINCIPAL LEDGER</span><h2>領款與本金還款紀錄</h2><p>每筆領款可分次還款；系統會依實際還款日期切分每日本金與利息。</p></div>
-              <button className="primary-button" onClick={() => setModal("draw")}>＋ 新增領款</button>
+              {!isFamilyViewer && <button className="primary-button" onClick={() => setModal("draw")}>＋ 新增領款</button>}
             </section>
             <section className="mini-stats">
               <div><span>累計領出</span><b>{money(metrics.totalDrawn)}</b></div>
@@ -707,7 +828,7 @@ export default function LoanApp() {
               <div><span>未還本金</span><b>{money(metrics.outstandingPrincipal)}</b></div>
             </section>
             <section className="panel records-full">
-              <RecordTable records={state.records} today={today} settings={settings} numberById={recordNumberById} onRepay={openRepay} onDelete={deleteRecord} />
+              <RecordTable records={state.records} today={today} settings={settings} numberById={recordNumberById} onRepay={openRepay} onDelete={deleteRecord} readOnly={isFamilyViewer} />
             </section>
           </div>
         )}
@@ -738,7 +859,7 @@ export default function LoanApp() {
                           <td>{row.settlement ? <><b>{money(row.settlement.paidAmount)}</b><small>{formatDate(row.settlement.paidDate)}</small></> : "—"}</td>
                           <td className={diff != null && Math.abs(diff) > 1 ? "negative" : ""}>{diff == null ? "—" : money(diff)}</td>
                           <td><StatusBadge status={row.status} /></td>
-                          <td>{row.end < today && <button className="row-button" onClick={() => openSettlement(row.key)}>{row.settlement ? "修改" : "登記繳息"}</button>}</td>
+                          <td>{!isFamilyViewer && row.end < today && <button className="row-button" onClick={() => openSettlement(row.key)}>{row.settlement ? "修改" : "登記繳息"}</button>}</td>
                         </tr>
                       );
                     })}
@@ -822,6 +943,27 @@ export default function LoanApp() {
         {active === "settings" && (
           <div className="page-content settings-page">
             <section className="settings-grid">
+              <section className="panel settings-card family-share-card">
+                <div className="panel-heading">
+                  <div><span className="eyebrow">FAMILY SHARING</span><h2>家庭共用帳本</h2></div>
+                  <span className={`cloud-pill ${familyStatus === "owner" ? "online" : familyStatus === "error" ? "error" : ""}`}>{familyStatus === "owner" ? "共用中" : familyStatus === "creating" || familyStatus === "loading" ? "連線中" : familyStatus === "error" ? "連線異常" : "尚未啟用"}</span>
+                </div>
+                {familyStatus === "owner" ? (
+                  <>
+                    <p>完整帳本已安全同步至雲端。將唯讀連結傳給太太，她即可看到與您相同的最新紀錄。</p>
+                    <div className="family-share-summary"><span>雲端資料</span><b>{state.records.length} 筆領款紀錄</b></div>
+                    <button className="primary-button full" type="button" onClick={() => copyFamilyLink()}>複製太太專用查看連結</button>
+                    <small className="security-note">只有持有專用連結的人能查看；新增、刪除及還款登記仍由您這台裝置管理。</small>
+                  </>
+                ) : (
+                  <>
+                    <p>啟用後會把目前完整資料上傳至家庭雲端，並產生一組太太可以直接開啟的唯讀連結。</p>
+                    <button className="primary-button full" type="button" onClick={enableFamilySharing} disabled={familyStatus === "creating" || familyStatus === "loading"}>{familyStatus === "creating" ? "正在建立家庭帳本…" : "啟用家庭共用並複製連結"}</button>
+                    <small className="security-note">原本儲存在瀏覽器中的紀錄不會被刪除，仍可下載 JSON 備份。</small>
+                  </>
+                )}
+              </section>
+
               <form className="panel settings-card" onSubmit={updateSettings}>
                 <div className="panel-heading"><div><span className="eyebrow">CALCULATION</span><h2>貸款與計息設定</h2></div></div>
                 <label>可貸總額<input name="loanLimit" type="number" min="0" defaultValue={settings.loanLimit} /></label>
@@ -860,7 +1002,7 @@ export default function LoanApp() {
         )}
       </main>
 
-      {modal === "draw" && (
+      {!isFamilyViewer && modal === "draw" && (
         <Modal title="新增領款紀錄" subtitle="新增後將從領款日翌日起開始計息" onClose={() => setModal(null)}>
           <form className="modal-form" onSubmit={addDraw}>
             <label>領出日期<input name="drawDate" type="date" max={today} defaultValue={today} required /></label>
@@ -871,7 +1013,7 @@ export default function LoanApp() {
         </Modal>
       )}
 
-      {modal === "repay" && selectedLoan && (
+      {!isFamilyViewer && modal === "repay" && selectedLoan && (
         <Modal title="登記本金還款" subtitle={`目前未還本金 ${money(selectedLoanRemaining)}`} onClose={() => setModal(null)}>
           <form className="modal-form" onSubmit={addRepayment}>
             <label>還款日期<input name="date" type="date" min={selectedLoan.drawDate} max={today} defaultValue={today} required /></label>
@@ -882,7 +1024,7 @@ export default function LoanApp() {
         </Modal>
       )}
 
-      {modal === "settle" && selectedMonthRow && (
+      {!isFamilyViewer && modal === "settle" && selectedMonthRow && (
         <Modal title={`${formatMonth(selectedMonth)}繳息登記`} subtitle={`應繳利息 ${money(selectedMonthRow.interest)}`} onClose={() => setModal(null)}>
           <form className="modal-form" onSubmit={saveSettlement}>
             <label>實際繳款日期<input name="paidDate" type="date" defaultValue={selectedMonthRow.settlement?.paidDate ?? today} required /></label>
@@ -920,7 +1062,7 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`status-badge ${key}`}>{status}</span>;
 }
 
-function RecordTable({ records, today, settings, numberById, onRepay, onDelete, compact = false }: {
+function RecordTable({ records, today, settings, numberById, onRepay, onDelete, compact = false, readOnly = false }: {
   records: LoanRecord[];
   today: string;
   settings: AppState["settings"];
@@ -928,6 +1070,7 @@ function RecordTable({ records, today, settings, numberById, onRepay, onDelete, 
   onRepay: (id: string) => void;
   onDelete: (id: string) => void;
   compact?: boolean;
+  readOnly?: boolean;
 }) {
   if (!records.length) return <div className="empty-state"><b>還沒有領款紀錄</b><span>按右上角「新增領款」開始記錄。</span></div>;
   return (
@@ -947,7 +1090,7 @@ function RecordTable({ records, today, settings, numberById, onRepay, onDelete, 
                 <td className="money-cell"><b>{money(balance)}</b></td>
                 <td><b>{money(interest)}</b><small>計息 {interestPeriodLabel(record, today)}</small></td>
                 <td><StatusBadge status={balance <= 0 ? "已清償" : repaid > 0 ? "部分還款" : "計息中"} /></td>
-                <td className="row-actions">{balance > 0 && <button className="row-button" onClick={() => onRepay(record.id)}>登記還款</button>}{!compact && <button className="delete-button" onClick={() => onDelete(record.id)}>刪除</button>}</td>
+                <td className="row-actions">{!readOnly && balance > 0 && <button className="row-button" onClick={() => onRepay(record.id)}>登記還款</button>}{!readOnly && !compact && <button className="delete-button" onClick={() => onDelete(record.id)}>刪除</button>}</td>
               </tr>
             );
           })}
