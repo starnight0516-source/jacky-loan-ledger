@@ -1,4 +1,4 @@
-import { createSharedLedger, getSharedLedger, updateSharedLedger } from "@/db/shared-ledger";
+import { claimPairingCode, createPairingCode, createSharedLedger, getSharedLedger, updateSharedLedger } from "@/db/shared-ledger";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +35,18 @@ function validState(state: unknown) {
 async function requestBody(request: Request) {
   const size = Number(request.headers.get("content-length") ?? "0");
   if (size > 1_000_000) throw new Error("payload_too_large");
-  return request.json() as Promise<{ id?: string; state?: unknown }>;
+  return request.json() as Promise<{
+    action?: "create_pairing" | "claim_pairing";
+    code?: string;
+    id?: string;
+    label?: string;
+    state?: unknown;
+  }>;
+}
+
+function bearerToken(request: Request) {
+  const authorization = request.headers.get("authorization") ?? "";
+  return authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
 }
 
 export function OPTIONS(request: Request) {
@@ -57,6 +68,25 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await requestBody(request);
+    if (body.action === "create_pairing") {
+      const id = body.id?.trim() ?? "";
+      const writeToken = bearerToken(request);
+      if (!/^[a-f0-9]{36}$/.test(id) || !/^[a-f0-9]{64}$/.test(writeToken)) {
+        return json(request, { error: "invalid_request" }, 400);
+      }
+      const pairing = await createPairingCode(id, writeToken);
+      return pairing ? json(request, pairing, 201) : json(request, { error: "forbidden" }, 403);
+    }
+    if (body.action === "claim_pairing") {
+      const id = body.id?.trim() ?? "";
+      const code = body.code?.trim() ?? "";
+      const label = body.label?.trim() || "已授權管理裝置";
+      if (!/^[a-f0-9]{36}$/.test(id) || code.length < 12) {
+        return json(request, { error: "invalid_request" }, 400);
+      }
+      const device = await claimPairingCode(id, code, label);
+      return device ? json(request, device, 201) : json(request, { error: "invalid_or_expired_code" }, 403);
+    }
     if (!validState(body.state)) return json(request, { error: "invalid_state" }, 400);
     const ledger = await createSharedLedger(body.state);
     return json(request, ledger, 201);
@@ -70,8 +100,7 @@ export async function PUT(request: Request) {
   try {
     const body = await requestBody(request);
     const id = body.id?.trim() ?? "";
-    const authorization = request.headers.get("authorization") ?? "";
-    const writeToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+    const writeToken = bearerToken(request);
     if (!/^[a-f0-9]{36}$/.test(id) || !/^[a-f0-9]{64}$/.test(writeToken) || !validState(body.state)) {
       return json(request, { error: "invalid_request" }, 400);
     }
