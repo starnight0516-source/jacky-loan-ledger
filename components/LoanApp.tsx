@@ -284,7 +284,7 @@ export default function LoanApp() {
   const [today, setToday] = useState("2026-08-10");
   const [active, setActive] = useState<NavKey>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [modal, setModal] = useState<"draw" | "repay" | "settle" | null>(null);
+  const [modal, setModal] = useState<"draw" | "repay" | "settle" | "pair" | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [toast, setToast] = useState("");
@@ -298,8 +298,11 @@ export default function LoanApp() {
   const [familyShareId, setFamilyShareId] = useState("");
   const [familyUpdatedAt, setFamilyUpdatedAt] = useState<number | null>(null);
   const [familySyncing, setFamilySyncing] = useState(false);
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingExpiresAt, setPairingExpiresAt] = useState<number | null>(null);
   const cloudDocRef = useRef<FirebaseDocRef | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  const familyPollerRef = useRef<number | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- hydrate client-only date and persisted browser data */
   useEffect(() => {
@@ -360,10 +363,11 @@ export default function LoanApp() {
     }
 
     loadFamilyLedger();
-    const poller = owner ? null : window.setInterval(loadFamilyLedger, 30_000);
+    familyPollerRef.current = owner ? null : window.setInterval(loadFamilyLedger, 30_000);
     return () => {
       cancelled = true;
-      if (poller) window.clearInterval(poller);
+      if (familyPollerRef.current) window.clearInterval(familyPollerRef.current);
+      familyPollerRef.current = null;
     };
   }, [hydrated]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -507,6 +511,55 @@ export default function LoanApp() {
       console.error(error);
       setFamilyStatus("error");
       notify("家庭共用建立失敗，請稍後再試一次");
+    }
+  }
+
+  async function createManagementCode() {
+    const writeToken = localStorage.getItem(FAMILY_WRITE_TOKEN_KEY) ?? "";
+    if (!familyShareId || !writeToken) return;
+    try {
+      const response = await fetch(FAMILY_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${writeToken}` },
+        body: JSON.stringify({ action: "create_pairing", id: familyShareId }),
+      });
+      if (!response.ok) throw new Error("pairing_create_failed");
+      const payload = await response.json() as { code: string; expiresAt: number };
+      setPairingCode(payload.code);
+      setPairingExpiresAt(payload.expiresAt);
+      notify("管理裝置授權碼已產生，10 分鐘內有效");
+    } catch (error) {
+      console.error(error);
+      notify("無法產生授權碼，請確認家庭雲端仍在連線中");
+    }
+  }
+
+  async function claimManagementDevice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const code = String(form.get("pairingCode") ?? "");
+    const label = String(form.get("deviceLabel") ?? "個人電腦");
+    if (!familyShareId || !code) return;
+    try {
+      const response = await fetch(FAMILY_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "claim_pairing", id: familyShareId, code, label }),
+      });
+      if (!response.ok) throw new Error("invalid_pairing_code");
+      const payload = await response.json() as { writeToken: string; state: AppState; updatedAt: number };
+      localStorage.setItem(FAMILY_SHARE_ID_KEY, familyShareId);
+      localStorage.setItem(FAMILY_WRITE_TOKEN_KEY, payload.writeToken);
+      if (familyPollerRef.current) window.clearInterval(familyPollerRef.current);
+      familyPollerRef.current = null;
+      setState(payload.state);
+      setFamilyUpdatedAt(payload.updatedAt);
+      setFamilyStatus("owner");
+      setModal(null);
+      notify("這台電腦已取得管理權限，之後不用再輸入授權碼");
+    } catch (error) {
+      console.error(error);
+      notify("授權碼不正確、已使用或已超過 10 分鐘");
     }
   }
 
@@ -753,7 +806,10 @@ export default function LoanApp() {
             {isFamilyViewer && (
               <section className="family-view-banner">
                 <div><b>家庭共用帳本</b><span>您目前以唯讀方式查看 Jacky 分享的完整貸款紀錄。</span></div>
-                <small>{familyUpdatedAt ? `雲端更新：${new Date(familyUpdatedAt).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })}` : "正在確認最新資料"}</small>
+                <div className="family-view-actions">
+                  <small>{familyUpdatedAt ? `雲端更新：${new Date(familyUpdatedAt).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })}` : "正在確認最新資料"}</small>
+                  <button type="button" onClick={() => setModal("pair")}>授權這台裝置管理</button>
+                </div>
               </section>
             )}
             {unpaidInterest > 0 && (
@@ -953,7 +1009,15 @@ export default function LoanApp() {
                     <p>完整帳本已安全同步至雲端。將唯讀連結傳給太太，她即可看到與您相同的最新紀錄。</p>
                     <div className="family-share-summary"><span>雲端資料</span><b>{state.records.length} 筆領款紀錄</b></div>
                     <button className="primary-button full" type="button" onClick={() => copyFamilyLink()}>複製太太專用查看連結</button>
-                    <small className="security-note">只有持有專用連結的人能查看；新增、刪除及還款登記仍由您這台裝置管理。</small>
+                    <button className="secondary-button full management-code-button" type="button" onClick={createManagementCode}>產生其他電腦的管理授權碼</button>
+                    {pairingCode && pairingExpiresAt && (
+                      <div className="pairing-code-box">
+                        <span>一次性管理授權碼</span>
+                        <strong>{pairingCode}</strong>
+                        <small>{new Date(pairingExpiresAt).toLocaleTimeString("zh-TW", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit" })} 前有效，使用後立即失效</small>
+                      </div>
+                    )}
+                    <small className="security-note">持有專用連結的人只能查看；新增、刪除及還款登記只開放給已授權的管理裝置。</small>
                   </>
                 ) : (
                   <>
@@ -1031,6 +1095,17 @@ export default function LoanApp() {
             <label>實際繳納利息<input name="paidAmount" type="number" min="0" defaultValue={Math.round(selectedMonthRow.settlement?.paidAmount ?? selectedMonthRow.interest)} required autoFocus /></label>
             <label>備註<input name="note" type="text" defaultValue={selectedMonthRow.settlement?.note ?? ""} placeholder="例如：自動扣款" /></label>
             <div className="modal-actions"><button type="button" className="ghost-button" onClick={() => setModal(null)}>取消</button><button type="submit" className="primary-button">儲存繳款</button></div>
+          </form>
+        </Modal>
+      )}
+
+      {isFamilyViewer && modal === "pair" && (
+        <Modal title="授權這台裝置管理" subtitle="請輸入由現有管理電腦產生的一次性授權碼" onClose={() => setModal(null)}>
+          <form className="modal-form" onSubmit={claimManagementDevice}>
+            <label>裝置名稱<input name="deviceLabel" type="text" maxLength={60} defaultValue="家用個人電腦" placeholder="例如：家用電腦" required /></label>
+            <label>管理授權碼<input name="pairingCode" className="pairing-code-input" type="text" autoCapitalize="characters" autoComplete="one-time-code" placeholder="XXXX-XXXX-XXXX" required autoFocus /></label>
+            <p className="modal-help">授權碼有效時間為 10 分鐘，且只能使用一次。成功後這台電腦會記住管理權限。</p>
+            <div className="modal-actions"><button type="button" className="ghost-button" onClick={() => setModal(null)}>取消</button><button type="submit" className="primary-button">確認授權</button></div>
           </form>
         </Modal>
       )}
