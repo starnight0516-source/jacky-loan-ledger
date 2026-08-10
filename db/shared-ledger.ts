@@ -124,7 +124,7 @@ export async function createPairingCode(id: string, writeToken: string) {
   if (!await canWrite(db, id, writeTokenHash)) return null;
   const code = pairingCode();
   const codeHash = await hashToken(code.replaceAll("-", ""));
-  const expiresAt = Date.now() + 10 * 60 * 1000;
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
   await db.prepare("DELETE FROM pairing_codes WHERE expires_at < ? OR used_at IS NOT NULL")
     .bind(Date.now()).run();
   await db.prepare(
