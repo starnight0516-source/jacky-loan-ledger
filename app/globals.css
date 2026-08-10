@@ -108,6 +108,17 @@ button:disabled { cursor: wait; opacity: .6; }
 .metric-card.blue { color: var(--blue); border-top: 3px solid var(--blue); }
 .metric-card.teal { color: var(--teal); border-top: 3px solid var(--teal); }
 .metric-card.amber { color: var(--amber); border-top: 3px solid var(--amber); }
+.interest-metric { min-height: 168px; }
+.interest-metric > strong { margin-top: 11px; }
+.interest-breakdown { position: relative; z-index: 1; margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.interest-breakdown > div { min-width: 0; padding: 9px 10px; border-radius: 10px; }
+.interest-breakdown span, .interest-breakdown b { display: block; }
+.interest-breakdown span { font-size: 9px; font-weight: 800; }
+.interest-breakdown b { margin-top: 3px; overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.interest-breakdown .paid { color: #167852; background: #e6f6ee; }
+.interest-breakdown .paid b { color: #126542; }
+.interest-breakdown .unpaid { color: #ad5c16; background: #fff0df; }
+.interest-breakdown .unpaid b { color: #9c4811; }
 
 .dashboard-grid { margin-top: 17px; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(330px, .8fr); gap: 17px; }
 .panel { border: 1px solid var(--line); border-radius: 17px; background: var(--surface); box-shadow: var(--shadow); }
