@@ -34,7 +34,7 @@ type AppState = {
   settlements: Record<string, Settlement>;
 };
 
-type NavKey = "dashboard" | "records" | "months" | "settings";
+type NavKey = "dashboard" | "records" | "months" | "calculator" | "settings";
 type CloudStatus = "offline" | "connecting" | "online" | "error";
 
 type FirebaseDocRef = {
@@ -286,6 +286,9 @@ export default function LoanApp() {
   const [firebaseText, setFirebaseText] = useState("");
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("offline");
   const [cloudEmail, setCloudEmail] = useState("");
+  const [calculatorAmount, setCalculatorAmount] = useState(100_000);
+  const [calculatorStart, setCalculatorStart] = useState("");
+  const [calculatorEnd, setCalculatorEnd] = useState("");
   const cloudDocRef = useRef<FirebaseDocRef | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
@@ -377,9 +380,22 @@ export default function LoanApp() {
   const maxTrend = Math.max(1, ...trendRows.map((row) => row.interest));
   const daysInMonth = dayNumber(monthEnd(currentMonth)) - dayNumber(previousMonthEnd(currentMonth));
   const elapsedDays = Math.max(0, dayNumber(today) - dayNumber(previousMonthEnd(currentMonth)));
+  const calculatorStartDate = calculatorStart || today;
+  const calculatorEndDate = calculatorEnd || fromDayNumber(dayNumber(calculatorStartDate) + 30);
+  const calculatorDays = Math.max(0, dayNumber(calculatorEndDate) - dayNumber(calculatorStartDate));
+  const calculatorDailyInterest = calculatorAmount > 0
+    ? calculatorAmount * settings.annualRate / settings.dayBasis
+    : 0;
+  const calculatorInterest = calculatorDailyInterest * calculatorDays;
+  const calculatorTotal = Math.max(0, calculatorAmount) + calculatorInterest;
+  const calculatorDateInvalid = calculatorEndDate < calculatorStartDate;
 
   function notify(message: string) {
     setToast(message);
+  }
+
+  function setCalculatorDuration(days: number) {
+    setCalculatorEnd(fromDayNumber(dayNumber(calculatorStartDate) + days));
   }
 
   function openRepay(recordId: string) {
@@ -555,6 +571,7 @@ export default function LoanApp() {
     { key: "dashboard", label: "儀表總覽", caption: "整體額度與利息" },
     { key: "records", label: "動用與還款", caption: "本金異動紀錄" },
     { key: "months", label: "月結利息", caption: "月底結算與繳息" },
+    { key: "calculator", label: "利息試算", caption: "領款前預估成本" },
     { key: "settings", label: "設定與備份", caption: "參數與雲端同步" },
   ];
 
@@ -724,6 +741,76 @@ export default function LoanApp() {
                   </tbody>
                 </table>
               </div>
+            </section>
+          </div>
+        )}
+
+        {active === "calculator" && (
+          <div className="page-content calculator-page">
+            <section className="section-intro">
+              <div>
+                <span className="eyebrow">LOAN INTEREST ESTIMATOR</span>
+                <h2>貸款利息試算</h2>
+                <p>在正式領款前先評估資金成本；試算內容不會儲存至正式帳本，也不會影響可貸餘額。</p>
+              </div>
+              <span className="calculator-rate">目前年利率 <b>{(settings.annualRate * 100).toFixed(2)}%</b></span>
+            </section>
+
+            <section className="calculator-grid">
+              <article className="panel calculator-form-card">
+                <div className="panel-heading">
+                  <div><span className="eyebrow">PLANNED LOAN</span><h2>預定貸款條件</h2></div>
+                  <span className="draft-badge">僅供試算</span>
+                </div>
+
+                <div className="calculator-fields">
+                  <label>
+                    預估領出金額
+                    <span className="amount-input"><b>NT$</b><input type="number" min="0" step="1000" value={calculatorAmount || ""} onChange={(event) => setCalculatorAmount(Number(event.target.value))} placeholder="例如 500000" /></span>
+                  </label>
+                  <div className="form-row">
+                    <label>預定領款日期<input type="date" value={calculatorStartDate} onChange={(event) => setCalculatorStart(event.target.value)} /></label>
+                    <label>預定還款日期<input type="date" min={calculatorStartDate} value={calculatorEndDate} onChange={(event) => setCalculatorEnd(event.target.value)} /></label>
+                  </div>
+                </div>
+
+                <div className="term-selector">
+                  <span>快速選擇貸款期間</span>
+                  <div className="term-presets">
+                    {[30, 60, 90, 180].map((days) => (
+                      <button key={days} type="button" className={calculatorDays === days ? "active" : ""} onClick={() => setCalculatorDuration(days)}>{days} 天</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="calculation-rule">
+                  <span>計算方式</span>
+                  <b>預估金額 × {(settings.annualRate * 100).toFixed(2)}% ÷ {settings.dayBasis} 天 × 計息天數</b>
+                  <small>領款日不計息，預定還款日仍計息，與正式帳本規則一致。</small>
+                </div>
+              </article>
+
+              <article className="panel calculator-result-card" aria-live="polite">
+                <div className="result-heading"><span className="eyebrow">ESTIMATED RESULT</span><h2>試算結果</h2></div>
+                {calculatorDateInvalid ? (
+                  <div className="calculator-error"><b>日期期間不正確</b><span>預定還款日期不可早於領款日期。</span></div>
+                ) : (
+                  <>
+                    <div className="estimate-hero">
+                      <span>預估利息</span>
+                      <strong>{money(calculatorInterest)}</strong>
+                      <small>{formatDate(calculatorStartDate)} 領款 · {formatDate(calculatorEndDate)} 還款</small>
+                    </div>
+                    <dl className="estimate-summary">
+                      <div><dt>預估金額</dt><dd>{money(calculatorAmount)}</dd></div>
+                      <div><dt>預定貸款期間</dt><dd>{calculatorDays} 天</dd></div>
+                      <div><dt>每日預估利息</dt><dd>{money(calculatorDailyInterest)}</dd></div>
+                      <div className="total"><dt>預估本金＋利息</dt><dd>{money(calculatorTotal)}</dd></div>
+                    </dl>
+                  </>
+                )}
+                <p className="estimate-note">此結果供資金規劃參考；實際利息會依正式領款、還款日期及本金異動重新計算。</p>
+              </article>
             </section>
           </div>
         )}
