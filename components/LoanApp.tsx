@@ -340,10 +340,14 @@ export default function LoanApp() {
       (sum, record) => sum + lifetimeInterest(record, today, settings.annualRate, settings.dayBasis),
       0,
     );
+    const paidInterest = Object.values(state.settlements)
+      .filter((settlement) => settlement.paidDate && settlement.paidDate <= today)
+      .reduce((sum, settlement) => sum + settlement.paidAmount, 0);
+    const unpaidInterestTotal = Math.max(0, lifetime - paidInterest);
     const currentInterest = monthInterest(state.records, currentMonth, today, settings.annualRate, settings.dayBasis);
     const priorInterest = monthInterest(state.records, priorMonth, today, settings.annualRate, settings.dayBasis);
-    return { totalDrawn, totalRepaid, outstandingPrincipal, available, lifetime, currentInterest, priorInterest };
-  }, [state.records, settings, today, currentMonth, priorMonth]);
+    return { totalDrawn, totalRepaid, outstandingPrincipal, available, lifetime, paidInterest, unpaidInterestTotal, currentInterest, priorInterest };
+  }, [state.records, state.settlements, settings, today, currentMonth, priorMonth]);
 
   const monthRows = useMemo(() => {
     const recordMonths = state.records.map((record) => monthKey(record.drawDate)).sort();
@@ -643,8 +647,8 @@ export default function LoanApp() {
             <section className="kpi-grid">
               <MetricCard label="目前可貸餘額" value={money(metrics.available)} note={`總額度 ${money(settings.loanLimit)}`} tone="navy" />
               <MetricCard label="目前未還本金" value={money(metrics.outstandingPrincipal)} note={`累計領出 ${money(metrics.totalDrawn)}`} tone="blue" />
-              <MetricCard label="截至今日累計利息" value={money(metrics.lifetime)} note="依每日實際本金計算" tone="teal" />
-              <MetricCard label="本月累計應繳利息" value={money(metrics.currentInterest)} note={`截至 ${formatDate(today)}`} tone="amber" />
+              <InterestMetricCard total={metrics.lifetime} paid={metrics.paidInterest} unpaid={metrics.unpaidInterestTotal} />
+              <MetricCard label="本月尚未結算利息" value={money(metrics.currentInterest)} note={`截至 ${formatDate(today)} · 月底結算`} tone="amber" />
             </section>
 
             <section className="dashboard-grid">
@@ -896,6 +900,19 @@ export default function LoanApp() {
 
 function MetricCard({ label, value, note, tone }: { label: string; value: string; note: string; tone: string }) {
   return <article className={`metric-card ${tone}`}><div className="metric-top"><span>{label}</span><i></i></div><strong>{value}</strong><small>{note}</small></article>;
+}
+
+function InterestMetricCard({ total, paid, unpaid }: { total: number; paid: number; unpaid: number }) {
+  return (
+    <article className="metric-card interest-metric teal">
+      <div className="metric-top"><span>截至今日累計利息</span><i></i></div>
+      <strong>{money(total)}</strong>
+      <div className="interest-breakdown">
+        <div className="paid"><span>已繳利息</span><b>{money(paid)}</b></div>
+        <div className="unpaid"><span>未繳利息</span><b>{money(unpaid)}</b></div>
+      </div>
+    </article>
+  );
 }
 
 function StatusBadge({ status }: { status: string }) {
