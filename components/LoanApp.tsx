@@ -254,6 +254,12 @@ function firstMonthInterest(record: LoanRecord, annualRate: number, dayBasis: nu
   return recordInterestForRange(record, record.drawDate, monthEnd(monthKey(record.drawDate)), annualRate, dayBasis);
 }
 
+function firstMonthInterestToDate(record: LoanRecord, asOf: string, annualRate: number, dayBasis: number) {
+  const openingMonthEnd = monthEnd(monthKey(record.drawDate));
+  const end = asOf < openingMonthEnd ? asOf : openingMonthEnd;
+  return recordInterestForRange(record, record.drawDate, end, annualRate, dayBasis);
+}
+
 function interestPeriodForMonth(record: LoanRecord, key: string, asOf: string, includeDays = true) {
   const rangeEnd = monthEnd(key) < asOf ? monthEnd(key) : asOf;
   const chargeStart = fromDayNumber(Math.max(dayNumber(record.drawDate) + 1, dayNumber(monthStart(key))));
@@ -264,8 +270,8 @@ function interestPeriodForMonth(record: LoanRecord, key: string, asOf: string, i
   return `${formatDate(chargeStart)}–${formatDate(end)}${includeDays ? `（${days} 天）` : ""}`;
 }
 
-function firstMonthInterestPeriodLabel(record: LoanRecord) {
-  return interestPeriodForMonth(record, monthKey(record.drawDate), monthEnd(monthKey(record.drawDate)));
+function firstMonthInterestPeriodLabel(record: LoanRecord, asOf: string) {
+  return interestPeriodForMonth(record, monthKey(record.drawDate), asOf);
 }
 
 function makeId(prefix: string) {
@@ -694,15 +700,17 @@ export default function LoanApp() {
   }
 
   function exportCsv() {
-    const header = ["領款編號", "領款日期", "領款金額", "已還本金", "未還本金", "借出當月利息", "借出當月計息期間", "截至今日累積利息", "累積計息期間", "備註"];
+    const header = ["領款編號", "領款日期", "領款金額", "已還本金", "未還本金", "借出當月截至今日利息", "借出當月截至今日期間", "借出當月底預估利息", "借出當月底預估期間", "截至今日累積利息", "累積計息期間", "備註"];
     const rows = state.records.map((record) => [
       recordNumberById[record.id],
       record.drawDate,
       record.amount,
       repaymentTotal(record, today),
       outstanding(record, today),
+      Math.round(firstMonthInterestToDate(record, today, settings.annualRate, settings.dayBasis)),
+      firstMonthInterestPeriodLabel(record, today),
       Math.round(firstMonthInterest(record, settings.annualRate, settings.dayBasis)),
-      firstMonthInterestPeriodLabel(record),
+      firstMonthInterestPeriodLabel(record, monthEnd(monthKey(record.drawDate))),
       Math.round(lifetimeInterest(record, today, settings.annualRate, settings.dayBasis)),
       interestPeriodLabel(record, today, true),
       record.note.replaceAll('"', '""'),
@@ -1224,7 +1232,9 @@ function RecordTable({ records, today, settings, numberById, onRepay, onDelete, 
           {records.map((record) => {
             const repaid = repaymentTotal(record, today);
             const balance = outstanding(record, today);
-            const openingMonthInterest = firstMonthInterest(record, settings.annualRate, settings.dayBasis);
+            const openingMonthToDate = firstMonthInterestToDate(record, today, settings.annualRate, settings.dayBasis);
+            const openingMonthProjected = firstMonthInterest(record, settings.annualRate, settings.dayBasis);
+            const openingMonthEnd = monthEnd(monthKey(record.drawDate));
             const accumulatedInterest = lifetimeInterest(record, today, settings.annualRate, settings.dayBasis);
             return (
               <tr key={record.id}>
@@ -1232,7 +1242,18 @@ function RecordTable({ records, today, settings, numberById, onRepay, onDelete, 
                 <td className="money-cell">{money(record.amount)}</td>
                 <td>{money(repaid)}</td>
                 <td className="money-cell"><b>{money(balance)}</b></td>
-                <td><b>{money(openingMonthInterest)}</b><small>{firstMonthInterestPeriodLabel(record)}</small></td>
+                <td>
+                  <div className="dual-interest">
+                    <div className="interest-snapshot actual">
+                      <span>截至今日</span><b>{money(openingMonthToDate)}</b>
+                      <small>{firstMonthInterestPeriodLabel(record, today)}</small>
+                    </div>
+                    <div className="interest-snapshot forecast">
+                      <span>月底預估</span><b>{money(openingMonthProjected)}</b>
+                      <small>{firstMonthInterestPeriodLabel(record, openingMonthEnd)}</small>
+                    </div>
+                  </div>
+                </td>
                 <td><b>{money(accumulatedInterest)}</b><small>{interestPeriodLabel(record, today, true)}</small></td>
                 <td><StatusBadge status={balance <= 0 ? "已清償" : repaid > 0 ? "部分還款" : "計息中"} /></td>
                 <td className="row-actions">{!readOnly && balance > 0 && <button className="row-button" onClick={() => onRepay(record.id)}>登記還款</button>}{!readOnly && !compact && <button className="delete-button" onClick={() => onDelete(record.id)}>刪除</button>}</td>
