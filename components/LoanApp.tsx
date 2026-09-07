@@ -192,46 +192,46 @@ function fullyRepaidDate(record: LoanRecord, asOf: string) {
 }
 
 function interestPeriodLabel(record: LoanRecord, asOf: string, includeDays = false) {
-  const start = fromDayNumber(dayNumber(record.drawDate) + 1);
+  const start = record.drawDate;
   const end = fullyRepaidDate(record, asOf) ?? asOf;
 
   if (dayNumber(start) > dayNumber(end)) {
     return outstanding(record, asOf) > 0 ? `${formatDate(start)} 起息` : "無計息日";
   }
-  const days = dayNumber(end) - dayNumber(record.drawDate);
+  const days = dayNumber(end) - dayNumber(start) + 1;
   return `${formatDate(start)}–${formatDate(end)}${includeDays ? `（${days} 天）` : ""}`;
 }
 
-function overlapDays(segmentStartExclusive: string, segmentEndInclusive: string, rangeStartExclusive: string, rangeEndInclusive: string) {
-  const start = Math.max(dayNumber(segmentStartExclusive), dayNumber(rangeStartExclusive));
+function overlapDays(segmentStartInclusive: string, segmentEndInclusive: string, rangeStartInclusive: string, rangeEndInclusive: string) {
+  const start = Math.max(dayNumber(segmentStartInclusive), dayNumber(rangeStartInclusive));
   const end = Math.min(dayNumber(segmentEndInclusive), dayNumber(rangeEndInclusive));
-  return Math.max(0, end - start);
+  return Math.max(0, end - start + 1);
 }
 
 function recordInterestForRange(
   record: LoanRecord,
-  rangeStartExclusive: string,
+  rangeStartInclusive: string,
   rangeEndInclusive: string,
   annualRate: number,
   dayBasis: number,
 ) {
-  if (record.drawDate >= rangeEndInclusive || record.amount <= 0) return 0;
+  if (record.drawDate > rangeEndInclusive || rangeStartInclusive > rangeEndInclusive || record.amount <= 0) return 0;
   let principal = record.amount;
-  let cursor = record.drawDate;
+  let segmentStart = record.drawDate;
   let interest = 0;
   const repayments = [...record.repayments].sort((a, b) => a.date.localeCompare(b.date));
 
   for (const repayment of repayments) {
     if (principal <= 0) break;
     const segmentEnd = repayment.date;
-    const days = overlapDays(cursor, segmentEnd, rangeStartExclusive, rangeEndInclusive);
+    const days = overlapDays(segmentStart, segmentEnd, rangeStartInclusive, rangeEndInclusive);
     interest += principal * annualRate * days / dayBasis;
     principal = Math.max(0, principal - repayment.principal);
-    cursor = segmentEnd;
+    segmentStart = fromDayNumber(dayNumber(segmentEnd) + 1);
   }
 
-  if (principal > 0 && cursor < rangeEndInclusive) {
-    const days = overlapDays(cursor, rangeEndInclusive, rangeStartExclusive, rangeEndInclusive);
+  if (principal > 0 && segmentStart <= rangeEndInclusive) {
+    const days = overlapDays(segmentStart, rangeEndInclusive, rangeStartInclusive, rangeEndInclusive);
     interest += principal * annualRate * days / dayBasis;
   }
   return interest;
@@ -241,7 +241,7 @@ function monthInterest(records: LoanRecord[], key: string, asOf: string, annualR
   const end = monthEnd(key) < asOf ? monthEnd(key) : asOf;
   if (monthStart(key) > asOf) return 0;
   return records.reduce(
-    (sum, record) => sum + recordInterestForRange(record, previousMonthEnd(key), end, annualRate, dayBasis),
+    (sum, record) => sum + recordInterestForRange(record, monthStart(key), end, annualRate, dayBasis),
     0,
   );
 }
@@ -262,7 +262,7 @@ function firstMonthInterestToDate(record: LoanRecord, asOf: string, annualRate: 
 
 function interestPeriodForMonth(record: LoanRecord, key: string, asOf: string, includeDays = true) {
   const rangeEnd = monthEnd(key) < asOf ? monthEnd(key) : asOf;
-  const chargeStart = fromDayNumber(Math.max(dayNumber(record.drawDate) + 1, dayNumber(monthStart(key))));
+  const chargeStart = fromDayNumber(Math.max(dayNumber(record.drawDate), dayNumber(monthStart(key))));
   const paidDate = fullyRepaidDate(record, rangeEnd);
   const end = paidDate ?? rangeEnd;
   if (dayNumber(chargeStart) > dayNumber(end)) return "本月無計息日";
@@ -490,8 +490,8 @@ export default function LoanApp() {
   const daysInMonth = dayNumber(monthEnd(currentMonth)) - dayNumber(previousMonthEnd(currentMonth));
   const elapsedDays = Math.max(0, dayNumber(today) - dayNumber(previousMonthEnd(currentMonth)));
   const calculatorStartDate = calculatorStart || today;
-  const calculatorEndDate = calculatorEnd || fromDayNumber(dayNumber(calculatorStartDate) + 30);
-  const calculatorDays = Math.max(0, dayNumber(calculatorEndDate) - dayNumber(calculatorStartDate));
+  const calculatorEndDate = calculatorEnd || fromDayNumber(dayNumber(calculatorStartDate) + 29);
+  const calculatorDays = Math.max(0, dayNumber(calculatorEndDate) - dayNumber(calculatorStartDate) + 1);
   const calculatorDailyInterest = calculatorAmount > 0
     ? calculatorAmount * settings.annualRate / settings.dayBasis
     : 0;
@@ -590,7 +590,7 @@ export default function LoanApp() {
   }
 
   function setCalculatorDuration(days: number) {
-    setCalculatorEnd(fromDayNumber(dayNumber(calculatorStartDate) + days));
+    setCalculatorEnd(fromDayNumber(dayNumber(calculatorStartDate) + days - 1));
   }
 
   function openRepay(recordId: string) {
@@ -790,7 +790,7 @@ export default function LoanApp() {
   const selectedMonthBreakdown = selectedMonthRow
     ? state.records.map((record) => ({
         record,
-        interest: recordInterestForRange(record, previousMonthEnd(selectedMonth), selectedMonthAsOf, settings.annualRate, settings.dayBasis),
+        interest: recordInterestForRange(record, monthStart(selectedMonth), selectedMonthAsOf, settings.annualRate, settings.dayBasis),
         period: interestPeriodForMonth(record, selectedMonth, selectedMonthAsOf),
       })).filter((item) => item.interest > 0)
     : [];
@@ -1015,7 +1015,7 @@ export default function LoanApp() {
                 <div className="calculation-rule">
                   <span>計算方式</span>
                   <b>預估金額 × {(settings.annualRate * 100).toFixed(2)}% ÷ {settings.dayBasis} 天 × 計息天數</b>
-                  <small>領款日不計息，預定還款日仍計息，與正式帳本規則一致。</small>
+                  <small>領款日與預定還款日均列入計息，與正式帳本規則一致。</small>
                 </div>
               </article>
 
@@ -1081,7 +1081,7 @@ export default function LoanApp() {
                 <label>可貸總額<input name="loanLimit" type="number" min="0" defaultValue={settings.loanLimit} /></label>
                 <label>年利率（%）<input name="annualRate" type="number" min="0" step="0.01" defaultValue={(settings.annualRate * 100).toFixed(2)} /></label>
                 <div className="form-row"><label>年計息基準<select name="dayBasis" defaultValue={settings.dayBasis}><option value="365">365 日</option><option value="366">366 日</option><option value="360">360 日</option></select></label><label>次月繳款日<input name="paymentDay" type="number" min="1" max="28" defaultValue={settings.paymentDay} /></label></div>
-                <p className="formula-note">計算規則：每日本金 × 年利率 ÷ 年計息基準；領款日不計息，還款日仍計息。</p>
+                <p className="formula-note">計算規則：每日本金 × 年利率 ÷ 年計息基準；領款日與還款日均列入計息，部分還款自翌日起按剩餘本金計算。</p>
                 <button className="primary-button full" type="submit">儲存並重新計算</button>
               </form>
 
@@ -1115,7 +1115,7 @@ export default function LoanApp() {
       </main>
 
       {!isFamilyViewer && modal === "draw" && (
-        <Modal title="新增領款紀錄" subtitle="新增後將從領款日翌日起開始計息" onClose={() => setModal(null)}>
+        <Modal title="新增領款紀錄" subtitle="新增後將從領款日當日起開始計息" onClose={() => setModal(null)}>
           <form className="modal-form" onSubmit={addDraw}>
             <label>領出日期<input name="drawDate" type="date" max={today} defaultValue={today} required /></label>
             <label>領出金額<input name="amount" type="number" min="1" step="1" placeholder="例如 50000" required autoFocus /></label>
@@ -1170,7 +1170,7 @@ export default function LoanApp() {
                 <tfoot><tr><td colSpan={3}>本月利息合計</td><td className="money-cell"><b>{money(selectedMonthRow.interest)}</b></td></tr></tfoot>
               </table>
             </div>
-            <p className="month-detail-note">利息以各筆每日未還本金 × 年利率 ÷ {settings.dayBasis} 計算；領款日不計息，還款日仍計息。各筆未四捨五入金額加總後，再以元顯示月結總額。</p>
+            <p className="month-detail-note">利息以各筆每日未還本金 × 年利率 ÷ {settings.dayBasis} 計算；領款日與還款日均列入計息，部分還款自翌日起按剩餘本金計算。各筆未四捨五入金額加總後，再以元顯示月結總額。</p>
           </div>
         </Modal>
       )}
